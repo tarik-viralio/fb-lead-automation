@@ -1,5 +1,4 @@
 require('dotenv').config({ path: './.env' });
-console.log("TOKEN DEBUG:", process.env.FB_ACCESS_TOKEN);
 const axios = require('axios');
 const nodemailer = require('nodemailer');
 const fs = require('fs');
@@ -12,10 +11,10 @@ const PROCESSED_FILE = path.join(__dirname, 'processed_leads.json');
 const FB_API = 'https://graph.facebook.com/v19.0';
 
 // Standard field names Facebook uses in Lead Ads forms
-const STANDARD_FIELDS = new Set([
-  'full_name', 'first_name', 'last_name',
-  'email', 'phone_number', 'phone',
-]);
+// const STANDARD_FIELDS = new Set([
+//  'full_name', 'first_name', 'last_name',
+//  'email', 'phone_number', 'phone',
+// ]);
 
 // ---------------------------------------------------------------------------
 // Processed leads store (deduplication)
@@ -74,17 +73,12 @@ function normalizeFieldName(name) {
     .replace(/^_+|_+$/g, '');
 }
 
-function parseLead(raw) {
-  const fields = {};
-  for (const { name, values } of raw.field_data || []) {
-    fields[name] = (values || [])[0] || '';
-  }
-
-  function parseLeadFields(fieldData = []) {
+function parseLeadFields(fieldData = []) {
   const parsed = {
     name: null,
     email: null,
     phone: null,
+    patientCount: null,
     additionalInfo: [],
   };
 
@@ -133,32 +127,40 @@ function parseLead(raw) {
       continue;
     }
 
+    if (
+      [
+        'wie_viele_patienten_haben_sie_pro_monat',
+        'patienten_pro_monat',
+      ].includes(normalized)
+    ) {
+      parsed.patientCount = value;
+      continue;
+    }
+
     parsed.additionalInfo.push(`${rawName}: ${value}`);
   }
 
   return {
-    name: parsed.name || 'Unknown',
-    email: parsed.email || 'N/A',
-    phone: parsed.phone || 'N/A',
-    additionalInfo: parsed.additionalInfo.join('\n'),
-  };
+  name: parsed.name || 'Unknown',
+  email: parsed.email || '',
+  phone: parsed.phone || '',
+  patientCount: parsed.patientCount || 'N/A',
+  additionalInfo: parsed.additionalInfo.join('\n'),
+};
 }
 
-  const name =
-    fields['full_name'] ||
-    [fields['first_name'], fields['last_name']].filter(Boolean).join(' ') ||
-    'Unknown';
+function parseLead(raw) {
+  const parsed = parseLeadFields(raw.field_data || []);
 
-  const phone = fields['phone_number'] || fields['phone'] || '';
-  const email = fields['email'] || '';
-
-  // Everything that isn't a standard field becomes "additional info"
-  const extras = Object.entries(fields)
-    .filter(([k]) => !STANDARD_FIELDS.has(k))
-    .map(([k, v]) => `${k}: ${v}`)
-    .join('\n');
-
-  return { id: raw.id, created_time: raw.created_time, name, email, phone, extras };
+  return {
+    id: raw.id,
+    created_time: raw.created_time,
+    name: parsed.name,
+    email: parsed.email,
+    phone: parsed.phone,
+    patientCount: parsed.patientCount,
+    extras: parsed.additionalInfo,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -176,22 +178,22 @@ const transporter = nodemailer.createTransport({
 
 async function sendEmail(lead) {
   const body = [
-    'Moin,',
+    'Moin Boss,',
     '',
     'Du hast nen neuen LEAD von FB Ads.',
     '',
     `Name: ${lead.name}`,
-    `Email: ${lead.email || 'N/A'}`,
-    `Telefon: ${lead.phone || 'N/A'}`,
-    `Additional Info: ${lead.extras || 'N/A'}`,
+    `E-Mail: ${lead.email || 'N/A'}`,
+    `Tel.-Nummer: ${lead.phone || 'N/A'}`,
+    `Patienten pro Monat: ${lead.patientCount || 'N/A'}`,
     '',
     'Viel Erfolg 🔥',
   ].join('\n');
 
   await transporter.sendMail({
-    from: `"FB Lead Bot" <${process.env.GMAIL_USER}>`,
+    from: `"Viralio" <${process.env.GMAIL_USER}>`,
     to: process.env.NOTIFY_EMAIL,
-    subject: '🚀 New FB Lead',
+    subject: '💸New FB LEAD🚀',
     text: body,
   });
 }
