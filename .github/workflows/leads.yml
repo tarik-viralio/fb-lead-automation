@@ -1,0 +1,43 @@
+name: FB Lead Automation
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  run-lead-automation:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Create .env file
+        run: |
+          cat > .env <<EOF
+          FB_ACCESS_TOKEN=${{ secrets.FB_ACCESS_TOKEN }}
+          FB_FORM_ID=${{ secrets.FB_FORM_ID }}
+          FB_PAGE_ID=${{ secrets.FB_PAGE_ID }}
+          GMAIL_USER=${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD=${{ secrets.GMAIL_APP_PASSWORD }}
+          NOTIFY_EMAIL=${{ secrets.NOTIFY_EMAIL }}
+          CLOSE_API_KEY=${{ secrets.CLOSE_API_KEY }}
+          EOF
+
+      - name: Ensure processed_leads.json exists
+        run: |
+          if [ ! -f processed_leads.json ]; then
+            echo "{\"ids\":[]}" > processed_leads.json
+          fi
+
+      - name: Run script
+        run: node index.js
