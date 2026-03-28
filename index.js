@@ -64,11 +64,85 @@ async function fetchLeads() {
   return allLeads;
 }
 
+function normalizeFieldName(name) {
+  return String(name || '')
+    .toLowerCase()
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
 function parseLead(raw) {
   const fields = {};
   for (const { name, values } of raw.field_data || []) {
     fields[name] = (values || [])[0] || '';
   }
+
+  function parseLeadFields(fieldData = []) {
+  const parsed = {
+    name: null,
+    email: null,
+    phone: null,
+    additionalInfo: [],
+  };
+
+  for (const field of fieldData) {
+    const rawName = field.name || '';
+    const normalized = normalizeFieldName(rawName);
+    const value = Array.isArray(field.values) ? field.values.join(', ') : '';
+
+    if (!value) continue;
+
+    if (
+      [
+        'full_name',
+        'vollstandiger_name',
+        'vollstaendiger_name',
+        'name',
+      ].includes(normalized)
+    ) {
+      parsed.name = value;
+      continue;
+    }
+
+    if (
+      [
+        'email',
+        'e_mail',
+        'email_adresse',
+        'e_mail_adresse',
+      ].includes(normalized)
+    ) {
+      parsed.email = value;
+      continue;
+    }
+
+    if (
+      [
+        'phone',
+        'phone_number',
+        'telefon',
+        'telefonnummer',
+        'mobilnummer',
+        'handynummer',
+      ].includes(normalized)
+    ) {
+      parsed.phone = value;
+      continue;
+    }
+
+    parsed.additionalInfo.push(`${rawName}: ${value}`);
+  }
+
+  return {
+    name: parsed.name || 'Unknown',
+    email: parsed.email || 'N/A',
+    phone: parsed.phone || 'N/A',
+    additionalInfo: parsed.additionalInfo.join('\n'),
+  };
+}
 
   const name =
     fields['full_name'] ||
