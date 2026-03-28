@@ -201,6 +201,79 @@ async function sendEmail(lead) {
 // ---------------------------------------------------------------------------
 // Close CRM API
 // ---------------------------------------------------------------------------
+
+// Normalize a display name for fuzzy-matching against Close CRM.
+// Same logic as normalizeFieldName so comparisons are consistent.
+function normalizeName(name) {
+  return String(name || '')
+    .toLowerCase()
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+/**
+ * Search Close CRM for a lead that matches by email, phone, or (fallback) name.
+ * Returns true if a duplicate is found, false otherwise.
+ */
+async function existsInClose(lead) {
+  const closeAuth = { username: process.env.CLOSE_API_KEY, password: '' };
+  const baseUrl = 'https://api.close.com/api/v1';
+
+  // Helper: run a Close search query and return all matching leads
+  async function searchClose(query) {
+    const { data } = await axios.get(`${baseUrl}/lead/`, {
+      auth: closeAuth,
+      params: { query, _fields: 'id,contacts', _limit: 10 },
+    });
+    return data.data || [];
+  }
+
+  // 1. Match by email
+  if (lead.email) {
+    const results = await searchClose(`email:"${lead.email}"`);
+    if (results.length > 0) {
+      console.log(`    ~ Duplicate found in Close by email: ${lead.email}`);
+      return true;
+    }
+  }
+
+  // 2. Match by phone
+  if (lead.phone) {
+    // Strip non-digit chars for comparison
+    const digitsOnly = lead.phone.replace(/\D/g, '');
+    const results = await searchClose(`phone:"${lead.phone}"`);
+    if (results.length > 0) {
+      console.log(`    ~ Duplicate found in Close by phone: ${lead.phone}`);
+      return true;
+    }
+    // Also try digits-only variant if different from original
+    if (digitsOnly !== lead.phone) {
+      const results2 = await searchClose(`phone:"${digitsOnly}"`);
+      if (results2.length > 0) {
+        console.log(`    ~ Duplicate found in Close by phone (digits): ${digitsOnly}`);
+        return true;
+      }
+    }
+  }
+
+  // 3. Fallback: match by normalized name (only when both email and phone are absent)
+  if (!lead.email && !lead.phone && lead.name && lead.name !== 'Unknown') {
+    const results = await searchClose(`name:"${lead.name}"`);
+    const normalizedIncoming = normalizeName(lead.name);
+    for (const r of results) {
+      if (normalizeName(r.name) === normalizedIncoming) {
+        console.log(`    ~ Duplicate found in Close by name: ${lead.name}`);
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 async function createCloseLead(lead) {
   const payload = {
     name: lead.name,
@@ -263,6 +336,21 @@ async function run() {
   for (const lead of newLeads) {
     console.log(`  → Processing: ${lead.name} [${lead.id}]`);
 
+    // Check Close CRM for duplicates before doing anything
+    let duplicate = false;
+    try {
+      duplicate = await existsInClose(lead);
+    } catch (err) {
+      console.error('    ✗ Close duplicate check failed:', err.response?.data || err.message);
+      // Treat as non-duplicate so we don't silently drop the lead
+    }
+
+    if (duplicate) {
+      console.log('    ⊘ Skipped — already exists in Close CRM');
+      markProcessed(lead.id);
+      continue;
+    }
+
     try {
       await sendEmail(lead);
       console.log('    ✓ Email sent');
@@ -280,8 +368,6 @@ async function run() {
       console.error('    ✗ Close CRM failed:', detail);
     }
 
-    // Mark as processed even if one step failed,
-    // to avoid sending duplicate emails/CRM entries on retry.
     markProcessed(lead.id);
   }
 }
